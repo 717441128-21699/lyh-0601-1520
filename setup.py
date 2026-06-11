@@ -1,0 +1,20 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="asset-label-tool",
+    version="1.0.0",
+    packages=find_packages(),
+    install_requires=[
+        "python-barcode>=0.15.1",
+        "qrcode[pil]>=7.4.2",
+        "Pillow>=10.0.0",
+        "reportlab>=4.0.0",
+        "openpyxl>=3.1.0",
+    ],
+    entry_points={
+        "console_scripts": [
+            "asset-label=asset_label_tool.cli:main",
+        ],
+    },
+    python_requires=">=3.8",
+)
