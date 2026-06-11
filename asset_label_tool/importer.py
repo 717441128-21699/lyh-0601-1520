@@ -22,7 +22,7 @@ def _normalize_header(header: str) -> str:
     return h
 
 
-def _read_rows(file_path: str, sheet: Optional[str] = None) -> Tuple[List[dict], str]:
+def _read_rows(file_path: str, sheet: Optional[str] = None) -> Tuple[List[dict], str, List[str]]:
     ext = os.path.splitext(file_path)[1].lower()
 
     if ext in (".csv",):
@@ -36,7 +36,9 @@ def _read_rows(file_path: str, sheet: Optional[str] = None) -> Tuple[List[dict],
                 for orig, norm in normalized.items():
                     mapped[norm] = row.get(orig, "").strip()
                 rows.append(mapped)
-        return rows, "csv"
+            present = set(normalized.values())
+            missing = [c for c in FIELD_MAPPING.keys() if c not in present]
+        return rows, "csv", missing
 
     elif ext in (".xlsx", ".xls"):
         try:
@@ -50,7 +52,7 @@ def _read_rows(file_path: str, sheet: Optional[str] = None) -> Tuple[List[dict],
         wb.close()
 
         if not raw_rows:
-            return [], "xlsx"
+            return [], "xlsx", list(FIELD_MAPPING.keys())
 
         headers = [str(h or "") for h in raw_rows[0]]
         normalized = {h: _normalize_header(h) for h in headers}
@@ -63,13 +65,16 @@ def _read_rows(file_path: str, sheet: Optional[str] = None) -> Tuple[List[dict],
                 val = row[i] if i < len(row) else ""
                 row_data[norm] = str(val or "").strip()
             rows.append(row_data)
-        return rows, "xlsx"
+        present = set(normalized.values())
+        missing = [c for c in FIELD_MAPPING.keys() if c not in present]
+        return rows, "xlsx", missing
     else:
         raise ValueError(f"不支持的文件格式: {ext}")
 
 
 def validate_assets(rows: List[dict], store: Store, category: Optional[str] = None,
-                    auto_id: bool = False, id_prefix: str = "AST") -> dict:
+                    auto_id: bool = False, id_prefix: str = "AST",
+                    missing_columns: Optional[List[str]] = None) -> dict:
     report = {
         "total_rows": len(rows),
         "empty_id_rows": [],
@@ -78,6 +83,7 @@ def validate_assets(rows: List[dict], store: Store, category: Optional[str] = No
         "auto_generated_ids": [],
         "valid_assets": [],
         "will_be_skipped": [],
+        "missing_columns": missing_columns or [],
     }
 
     seen_ids = set()
@@ -147,16 +153,32 @@ def import_file(file_path: str, store: Store, category: Optional[str] = None,
         return {"error": f"文件不存在: {file_path}"}
 
     try:
-        rows, _ = _read_rows(file_path, sheet)
+        rows, _, missing_cols = _read_rows(file_path, sheet)
     except ImportError as e:
         return {"error": str(e)}
     except ValueError as e:
         return {"error": str(e)}
 
     if not rows:
-        return {"error": "文件为空或只有表头"}
+        report = {
+            "total_rows": 0,
+            "new_count": 0,
+            "will_be_skipped": [],
+            "auto_generated_ids": [],
+            "duplicate_rows": [],
+            "empty_id_rows": [],
+            "missing_field_rows": [],
+            "valid_assets": [],
+            "missing_columns": missing_cols,
+        }
+        report["applied"] = False if dry_run else True
+        report["added"] = []
+        report["skipped"] = []
+        report["db_duplicates"] = []
+        return report
 
-    report = validate_assets(rows, store, category=category, auto_id=auto_id, id_prefix=id_prefix)
+    report = validate_assets(rows, store, category=category, auto_id=auto_id,
+                             id_prefix=id_prefix, missing_columns=missing_cols)
 
     if dry_run:
         report["applied"] = False
@@ -177,6 +199,13 @@ def import_file(file_path: str, store: Store, category: Optional[str] = None,
 
 
 def format_validation_report(report: dict) -> str:
+    CHINESE_COL = {
+        "asset_id": "资产编号",
+        "name": "资产名称",
+        "location": "位置",
+        "responsible": "责任人",
+        "category": "类别",
+    }
     lines = []
     lines.append("=" * 60)
     lines.append("  导入校验报告")
@@ -184,6 +213,11 @@ def format_validation_report(report: dict) -> str:
     lines.append(f"  文件总行数:    {report['total_rows']}")
     lines.append(f"  可新增数量:    {report['new_count']}")
     lines.append(f"  将跳过数量:    {len(report['will_be_skipped'])}")
+
+    if report.get("missing_columns"):
+        missing_cn = [CHINESE_COL.get(c, c) for c in report["missing_columns"]]
+        lines.append(f"  ⚠ 表头缺少列: {', '.join(missing_cn)} (相关字段将全部视为空)")
+
     lines.append("-" * 60)
 
     if report["auto_generated_ids"]:

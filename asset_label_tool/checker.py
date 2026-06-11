@@ -41,8 +41,95 @@ def reprint_batch(store: Store, batch_id: str, output_dir: str) -> Optional[List
     return files
 
 
+def _format_inventory_progress(progress: dict) -> str:
+    lines = []
+    lines.append("=" * 60)
+    lines.append(f"  盘点批次进度: {progress['name']}")
+    lines.append("=" * 60)
+    group_cn = "位置" if progress["group_by"] == "location" else "责任人"
+    lines.append(f"  分组方式: 按{group_cn}")
+    lines.append(f"  {group_cn}:  {progress['group_value']}")
+    lines.append(f"  创建时间: {progress['created_at']}")
+    lines.append("-" * 60)
+    total = progress["total"]
+    printed = progress["printed"]
+    unprinted = progress["unprinted"]
+    pct = (printed / total * 100) if total > 0 else 0
+    bar_len = 30
+    filled = int(bar_len * printed / total) if total > 0 else 0
+    bar = "█" * filled + "░" * (bar_len - filled)
+    lines.append(f"  进度:   |{bar}| {printed}/{total} ({pct:.1f}%)")
+    lines.append(f"  已打印: {printed}")
+    lines.append(f"  未打印: {unprinted}")
+    if unprinted:
+        lines.append("")
+        lines.append("  待补打资产:")
+        for aid in progress["unprinted_ids"][:20]:
+            lines.append(f"    - {aid}")
+        if len(progress["unprinted_ids"]) > 20:
+            lines.append(f"    ... 及其他 {len(progress['unprinted_ids']) - 20} 条")
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
 def run_check(args):
     store = Store(args.data_dir)
+
+    if getattr(args, "list_inventories", False):
+        invs = store.get_all_inventories()
+        if not invs:
+            print("[提示] 暂无盘点批次")
+            return
+        print("[盘点批次列表]")
+        print("-" * 70)
+        print(f"{'批次名':<30} {'分组':<10} {'分组值':<20} {'资产数':<8} {'创建时间'}")
+        print("-" * 70)
+        for inv in invs:
+            prog = store.get_inventory_progress(inv.name)
+            total = prog["total"] if prog else len(inv.asset_ids)
+            printed = prog["printed"] if prog else 0
+            group_cn = "位置" if inv.group_by == "location" else "责任人"
+            print(f"{inv.name:<30} {group_cn:<10} {inv.group_value[:18]:<20} {f'{printed}/{total}':<8} {inv.created_at}")
+        print("-" * 70)
+        print(f"共 {len(invs)} 个盘点批次")
+        return
+
+    if getattr(args, "inventory", None):
+        progress = store.get_inventory_progress(args.inventory)
+        if not progress:
+            print(f"[错误] 盘点批次 '{args.inventory}' 不存在")
+            return
+        print(_format_inventory_progress(progress))
+        return
+
+    if getattr(args, "inventory_detail", None):
+        progress = store.get_inventory_progress(args.inventory_detail)
+        if not progress:
+            print(f"[错误] 盘点批次 '{args.inventory_detail}' 不存在")
+            return
+        print(_format_inventory_progress(progress))
+        print("")
+        print("[资产明细]")
+        print("-" * 90)
+        print(f"{'状态':<6} {'资产编号':<20} {'名称':<18} {'位置':<22} {'责任人':<10} {'打印批次'}")
+        print("-" * 90)
+        all_ids = progress["printed_ids"] + progress["unprinted_ids"]
+        printed_set = set(progress["printed_ids"])
+        for aid in all_ids:
+            asset = store.get_asset(aid)
+            if not asset:
+                continue
+            status = "✔已打" if aid in printed_set else "✘未打"
+            print(f"{status:<6} {asset.asset_id:<20} {asset.name[:16]:<18} {asset.location[:20]:<22} {asset.responsible[:10]:<10} {asset.print_batch or '-'}")
+        print("-" * 90)
+        return
+
+    if getattr(args, "delete_inventory", None):
+        if store.delete_inventory(args.delete_inventory):
+            print(f"[已删除] 盘点批次 '{args.delete_inventory}'")
+        else:
+            print(f"[错误] 盘点批次 '{args.delete_inventory}' 不存在")
+        return
 
     if args.reprint:
         asset_id = args.reprint

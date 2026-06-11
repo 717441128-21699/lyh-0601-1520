@@ -1,7 +1,7 @@
 import json
 import os
 from typing import List, Optional, Dict
-from .models import Asset, BatchRecord, PrintTask
+from .models import Asset, BatchRecord, PrintTask, InventoryBatch
 
 
 class Store:
@@ -10,9 +10,11 @@ class Store:
         self.assets_file = os.path.join(data_dir, "assets.json")
         self.batches_file = os.path.join(data_dir, "batches.json")
         self.tasks_file = os.path.join(data_dir, "tasks.json")
+        self.inventories_file = os.path.join(data_dir, "inventories.json")
         self._assets: Dict[str, Asset] = {}
         self._batches: List[BatchRecord] = []
         self._tasks: Dict[str, PrintTask] = {}
+        self._inventories: Dict[str, InventoryBatch] = {}
         self._load()
 
     def _load(self):
@@ -28,6 +30,10 @@ class Store:
             with open(self.tasks_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 self._tasks = {t["name"]: PrintTask.from_dict(t) for t in data}
+        if os.path.exists(self.inventories_file):
+            with open(self.inventories_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                self._inventories = {inv["name"]: InventoryBatch.from_dict(inv) for inv in data}
 
     def _save_assets(self):
         os.makedirs(self.data_dir, exist_ok=True)
@@ -161,3 +167,52 @@ class Store:
             self._save_tasks()
             return True
         return False
+
+    def _save_inventories(self):
+        os.makedirs(self.data_dir, exist_ok=True)
+        with open(self.inventories_file, "w", encoding="utf-8") as f:
+            json.dump([inv.to_dict() for inv in self._inventories.values()], f, ensure_ascii=False, indent=2)
+
+    def save_inventory(self, inv: InventoryBatch):
+        self._inventories[inv.name] = inv
+        self._save_inventories()
+
+    def get_inventory(self, name: str) -> Optional[InventoryBatch]:
+        return self._inventories.get(name)
+
+    def get_all_inventories(self) -> List[InventoryBatch]:
+        return list(self._inventories.values())
+
+    def delete_inventory(self, name: str) -> bool:
+        if name in self._inventories:
+            del self._inventories[name]
+            self._save_inventories()
+            return True
+        return False
+
+    def get_inventory_progress(self, name: str) -> Optional[dict]:
+        inv = self.get_inventory(name)
+        if not inv:
+            return None
+        total = len(inv.asset_ids)
+        printed = 0
+        unprinted_ids = []
+        printed_ids = []
+        for aid in inv.asset_ids:
+            asset = self.get_asset(aid)
+            if asset and asset.printed:
+                printed += 1
+                printed_ids.append(aid)
+            else:
+                unprinted_ids.append(aid)
+        return {
+            "name": name,
+            "group_by": inv.group_by,
+            "group_value": inv.group_value,
+            "total": total,
+            "printed": printed,
+            "unprinted": total - printed,
+            "printed_ids": printed_ids,
+            "unprinted_ids": unprinted_ids,
+            "created_at": inv.created_at,
+        }

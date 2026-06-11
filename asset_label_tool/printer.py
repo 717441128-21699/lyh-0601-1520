@@ -1,8 +1,9 @@
 import os
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 from io import BytesIO
+from collections import defaultdict
 
-from .models import Asset, BatchRecord, LABEL_SIZES, CODE_STYLES, PrintTask
+from .models import Asset, BatchRecord, LABEL_SIZES, CODE_STYLES, PrintTask, InventoryBatch
 from .store import Store
 
 
@@ -163,7 +164,9 @@ def _resolve_assets(store: Store, args) -> List[Asset]:
             unprinted_only=unprinted,
         )
 
-    return store.get_unprinted_assets()
+    if unprinted:
+        return store.get_unprinted_assets()
+    return store.get_all_assets()
 
 
 def print_labels(store: Store, assets: List[Asset], label_size: str,
@@ -275,6 +278,8 @@ def run_print(args):
         print(f"  可选: {', '.join(CODE_STYLES)}")
         return
 
+    inv_group = getattr(args, "inventory_group", None)
+
     try:
         assets = _resolve_assets(store, args)
     except ValueError as e:
@@ -283,6 +288,77 @@ def run_print(args):
 
     if not assets:
         print("[提示] 没有找到匹配的资产记录")
+        return
+
+    if inv_group:
+        if inv_group == "location":
+            groups: Dict[str, List[Asset]] = defaultdict(list)
+            for a in assets:
+                gkey = a.location or "(未设置位置)"
+                groups[gkey].append(a)
+            group_display = "位置"
+        elif inv_group == "responsible":
+            groups = defaultdict(list)
+            for a in assets:
+                gkey = a.responsible or "(未设置责任人)"
+                groups[gkey].append(a)
+            group_display = "责任人"
+        else:
+            print(f"[错误] --inventory-group 只能是 'location' 或 'responsible'")
+            return
+
+        if not groups:
+            print("[提示] 没有可分组的资产")
+            return
+
+        inv_prefix = getattr(args, "inventory_prefix", "INV")
+        base_name = getattr(args, "inventory_name", None)
+        output_root = getattr(args, "output", None) or os.path.join(".", "labels_output")
+
+        print(f"[盘点批次模式] 按 {group_display} 分组，共 {len(groups)} 组")
+        print("-" * 60)
+
+        inv_counter = 1
+        skip_missing = getattr(args, "skip_missing", False)
+        for gvalue in sorted(groups.keys()):
+            group_assets = groups[gvalue]
+            valid = []
+            skipped = 0
+            for a in group_assets:
+                missing = a.missing_fields()
+                if missing and skip_missing:
+                    skipped += 1
+                else:
+                    valid.append(a)
+            if not valid:
+                print(f"  [跳过组] {group_display}={gvalue}: 无可打印资产")
+                continue
+
+            if base_name:
+                inv_name = f"{base_name}_{inv_counter:02d}"
+            else:
+                safe_gv = gvalue.replace("/", "_").replace("\\", "_").replace(" ", "_")[:20]
+                inv_name = f"{inv_prefix}_{safe_gv}"
+
+            inv = InventoryBatch(
+                name=inv_name,
+                group_by=inv_group,
+                group_value=gvalue,
+                asset_ids=[a.asset_id for a in valid],
+            )
+            store.save_inventory(inv)
+
+            group_dir = os.path.join(output_root, inv_name)
+            batch, files = print_labels(store, valid, label_size, code_style, group_dir)
+
+            print(f"  [{inv_name}] {group_display}={gvalue}")
+            print(f"    资产: {len(valid)} 张" + (f" (跳过 {skipped} 张)" if skipped else ""))
+            print(f"    批次号: {batch.batch_id}")
+            print(f"    目录: {os.path.abspath(group_dir)}")
+            inv_counter += 1
+
+        print("-" * 60)
+        print(f"[完成] 共生成 {inv_counter - 1} 个盘点批次")
         return
 
     valid_assets = []

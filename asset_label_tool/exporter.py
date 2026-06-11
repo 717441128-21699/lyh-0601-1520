@@ -1,8 +1,35 @@
 import os
+import csv
 from typing import List, Optional, Dict
 from .models import Asset, BatchRecord, LABEL_SIZES, CODE_STYLES, PAPER_SIZES, PrintTask
 from .store import Store
 from .printer import _create_label_image
+
+
+def validate_pdf_layout_params(paper_size: str, cols: Optional[int], rows: Optional[int],
+                               margin_mm: float, gap_mm: float) -> Optional[str]:
+    if paper_size not in PAPER_SIZES:
+        return f"纸张规格 '{paper_size}' 无效，可选: {', '.join(PAPER_SIZES.keys())}"
+
+    if cols is not None and cols <= 0:
+        return f"列数 {cols} 无效，必须 >= 1（建议 1~6，根据纸张和标签尺寸调整）"
+
+    if rows is not None and rows <= 0:
+        return f"行数 {rows} 无效，必须 >= 1（建议 1~20，根据纸张和标签尺寸调整）"
+
+    if margin_mm < 0:
+        return f"页边距 {margin_mm}mm 无效，必须 >= 0（建议 5~20mm）"
+
+    if gap_mm < 0:
+        return f"标签间距 {gap_mm}mm 无效，必须 >= 0（建议 0~10mm）"
+
+    ps = PAPER_SIZES[paper_size]
+    pw, ph = ps["width"], ps["height"]
+
+    if margin_mm * 2 >= min(pw, ph):
+        return f"页边距 {margin_mm}mm 过大，纸张仅 {pw}×{ph}mm，边距之和已超过纸张短边"
+
+    return None
 
 
 def _export_as_pdf(assets: List[Asset], output_path: str, label_size: str, code_style: str,
@@ -59,8 +86,10 @@ def _export_as_pdf(assets: List[Asset], output_path: str, label_size: str, code_
 
     c = canvas.Canvas(output_path, pagesize=(page_w, page_h))
 
+    positions = []
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        page_idx = 0
+        page_idx = 1
         for i, asset in enumerate(assets):
             idx_in_page = i % labels_per_page
             if idx_in_page == 0 and i > 0:
@@ -79,6 +108,19 @@ def _export_as_pdf(assets: List[Asset], output_path: str, label_size: str, code_
 
             c.drawImage(tmp_path, x, y, width=label_w, height=label_h)
 
+            positions.append({
+                "asset_id": asset.asset_id,
+                "name": asset.name,
+                "location": asset.location,
+                "responsible": asset.responsible,
+                "category": asset.category,
+                "page": page_idx,
+                "col": col + 1,
+                "row": row + 1,
+                "printed": "是" if asset.printed else "否",
+                "print_batch": asset.print_batch or "",
+            })
+
     c.save()
 
     summary = {
@@ -95,6 +137,7 @@ def _export_as_pdf(assets: List[Asset], output_path: str, label_size: str, code_
         "margin_mm": margin_mm,
         "gap_mm": gap_mm,
         "output_path": output_path,
+        "positions": positions,
     }
     return summary
 
@@ -109,6 +152,31 @@ def _export_as_pngs(assets: List[Asset], output_dir: str, label_size: str, code_
         label_img.save(filepath, "PNG")
         files.append(filepath)
     return files
+
+
+def _export_manifest_csv(summary: Dict, manifest_path: str):
+    positions = summary.get("positions", [])
+    fieldnames = [
+        "asset_id", "name", "location", "responsible", "category",
+        "page", "row", "col", "printed", "print_batch",
+    ]
+    headers_cn = {
+        "asset_id": "资产编号",
+        "name": "资产名称",
+        "location": "位置",
+        "responsible": "责任人",
+        "category": "类别",
+        "page": "页码",
+        "row": "行号",
+        "col": "列号",
+        "printed": "是否已打印",
+        "print_batch": "打印批次",
+    }
+    with open(manifest_path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writerow(headers_cn)
+        for p in positions:
+            writer.writerow({k: p.get(k, "") for k in fieldnames})
 
 
 def _resolve_export_assets(store: Store, args) -> List[Asset]:
@@ -164,7 +232,9 @@ def format_pdf_summary(summary: Dict) -> str:
     lines.append("-" * 50)
     lines.append(f"  标签总数:      {summary['total_labels']}")
     lines.append(f"  总页数:        {summary['total_pages']}")
-    lines.append(f"  输出文件:      {summary['output_path']}")
+    lines.append(f"  PDF 文件:      {summary['output_path']}")
+    if summary.get("manifest_path"):
+        lines.append(f"  明细清单:      {summary['manifest_path']}")
     lines.append("=" * 50)
     return "\n".join(lines)
 
@@ -225,11 +295,23 @@ def run_export(args):
         margin = getattr(args, "margin", 10.0)
         gap = getattr(args, "gap", 3.0)
 
+        param_err = validate_pdf_layout_params(paper_size, cols, rows, margin, gap)
+        if param_err:
+            print(f"[参数错误] {param_err}")
+            return
+
         summary = _export_as_pdf(
             assets, output, label_size, code_style,
             paper_size=paper_size, cols=cols, rows=rows,
             margin_mm=margin, gap_mm=gap,
         )
+
+        if getattr(args, "with_manifest", True):
+            manifest_path = os.path.splitext(output)[0] + "_manifest.csv"
+            _export_manifest_csv(summary, manifest_path)
+            summary["manifest_path"] = os.path.abspath(manifest_path)
+
+        summary["output_path"] = os.path.abspath(summary["output_path"])
         print(format_pdf_summary(summary))
     else:
         if not output:

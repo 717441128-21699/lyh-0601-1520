@@ -95,6 +95,28 @@ class PrintTask:
         )
 
 
+@dataclass
+class InventoryBatch:
+    name: str
+    group_by: str
+    group_value: str
+    asset_ids: List[str] = field(default_factory=list)
+    created_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "InventoryBatch":
+        return cls(
+            name=d.get("name", ""),
+            group_by=d.get("group_by", ""),
+            group_value=d.get("group_value", ""),
+            asset_ids=d.get("asset_ids", []),
+            created_at=d.get("created_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+
+
 LABEL_SIZES = {
     "small": {"width": 200, "height": 100},
     "medium": {"width": 300, "height": 150},

@@ -50,6 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_print.add_argument("--save-task", metavar="NAME", help="将当前筛选条件保存为常用打印任务")
     p_print.add_argument("--list-tasks", action="store_true", help="列出所有常用打印任务")
     p_print.add_argument("--delete-task", metavar="NAME", help="删除指定打印任务")
+    p_print.add_argument("--inventory-group", choices=["location", "responsible"],
+                         help="盘点模式：按位置/责任人生成分组，每组生成独立盘点批次")
+    p_print.add_argument("--inventory-prefix", default="INV", help="盘点批次名称前缀 (默认: INV)")
+    p_print.add_argument("--inventory-name", help="盘点批次基础名 (自动加序号，如 Q2盘点_01)")
 
     # ---- export ----
     p_export = sub.add_parser("export", help="导出标签文件 (PDF/PNG)")
@@ -68,6 +72,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("--rows", type=int, help="每页行数 (自动计算)")
     p_export.add_argument("--margin", type=float, default=10.0, help="页边距 (mm, 默认: 10)")
     p_export.add_argument("--gap", type=float, default=3.0, help="标签间距 (mm, 默认: 3)")
+    manifest_group = p_export.add_mutually_exclusive_group()
+    manifest_group.add_argument("--with-manifest", dest="with_manifest", action="store_true",
+                                help="导出 PDF 时同步导出明细清单 CSV (默认开启)")
+    manifest_group.add_argument("--no-manifest", dest="with_manifest", action="store_false",
+                                help="不导出明细清单 CSV")
+    p_export.set_defaults(with_manifest=True)
 
     # ---- check ----
     p_check = sub.add_parser("check", help="查看打印记录、资产状态及补打")
@@ -77,6 +87,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--label-size", choices=list(LABEL_SIZES.keys()), help="补打标签尺寸")
     p_check.add_argument("--code-style", choices=list(CODE_STYLES), help="补打码样式")
     p_check.add_argument("--output", help="补打输出目录")
+    p_check.add_argument("--list-inventories", action="store_true", help="列出所有盘点批次")
+    p_check.add_argument("--inventory", metavar="NAME", help="查看指定盘点批次的打印进度")
+    p_check.add_argument("--inventory-detail", metavar="NAME", help="查看指定盘点批次的资产明细和打印状态")
+    p_check.add_argument("--delete-inventory", metavar="NAME", help="删除指定盘点批次")
 
     return parser
 
