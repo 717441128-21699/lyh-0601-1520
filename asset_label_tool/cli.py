@@ -7,6 +7,7 @@ from .preview import run_preview
 from .printer import run_print
 from .exporter import run_export
 from .checker import run_check
+from .scanner import run_scan
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -91,6 +92,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--inventory", metavar="NAME", help="查看指定盘点批次的打印进度")
     p_check.add_argument("--inventory-detail", metavar="NAME", help="查看指定盘点批次的资产明细和打印状态")
     p_check.add_argument("--delete-inventory", metavar="NAME", help="删除指定盘点批次")
+    p_check.add_argument("--export-diff", metavar="CSV_PATH", help="导出盘点差异表（明细 + 按分组汇总）CSV")
+
+    # ---- scan ----
+    p_scan = sub.add_parser("scan", help="现场扫码更新盘点批次核对状态（支持文件或标准输入）")
+    p_scan.add_argument("--inventory", required=True, metavar="NAME",
+                        help="目标盘点批次名，可用 check --list-inventories 查看")
+    p_scan.add_argument("--file", help="从文件读取编号 (CSV 或逐行纯文本)")
+    # (不使用 --stdin 参数；当未指定 --file 时自动从 stdin 读取)
 
     return parser
 
@@ -109,6 +118,7 @@ def main(argv=None):
         "print": run_print,
         "export": run_export,
         "check": run_check,
+        "scan": run_scan,
     }
 
     handler = dispatch.get(args.command)

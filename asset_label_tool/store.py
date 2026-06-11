@@ -195,24 +195,82 @@ class Store:
         if not inv:
             return None
         total = len(inv.asset_ids)
-        printed = 0
-        unprinted_ids = []
+        checked_set = set(inv.checked_ids)
+        extraneous_set = set(inv.extraneous_ids)
+
         printed_ids = []
+        printed_not_checked = []
+        unprinted_ids = []
+        checked_ids = []
         for aid in inv.asset_ids:
             asset = self.get_asset(aid)
-            if asset and asset.printed:
-                printed += 1
+            is_printed = bool(asset and asset.printed)
+            is_checked = aid in checked_set
+            if is_printed:
                 printed_ids.append(aid)
             else:
                 unprinted_ids.append(aid)
+            if is_checked:
+                checked_ids.append(aid)
+            if is_printed and not is_checked:
+                printed_not_checked.append(aid)
+
+        not_checked = [aid for aid in inv.asset_ids if aid not in checked_set]
+        unprinted_not_checked = [aid for aid in not_checked if aid in unprinted_ids]
+
         return {
             "name": name,
             "group_by": inv.group_by,
             "group_value": inv.group_value,
             "total": total,
-            "printed": printed,
-            "unprinted": total - printed,
+            "printed_count": len(printed_ids),
+            "unprinted_count": len(unprinted_ids),
+            "checked_count": len(checked_ids),
+            "not_checked_count": len(not_checked),
+            "printed_not_checked_count": len(printed_not_checked),
+            "unprinted_not_checked_count": len(unprinted_not_checked),
+            "extraneous_count": len(extraneous_set),
+            "all_ids": inv.asset_ids,
             "printed_ids": printed_ids,
             "unprinted_ids": unprinted_ids,
+            "checked_ids": inv.checked_ids,
+            "printed_not_checked_ids": printed_not_checked,
+            "unprinted_not_checked_ids": unprinted_not_checked,
+            "extraneous_ids": list(extraneous_set),
             "created_at": inv.created_at,
+        }
+
+    def add_scan_results(self, inv_name: str, scan_ids: List[str]) -> dict:
+        inv = self.get_inventory(inv_name)
+        if not inv:
+            return {"error": f"盘点批次 '{inv_name}' 不存在"}
+
+        in_batch = set(inv.asset_ids)
+        checked_set = set(inv.checked_ids)
+        extraneous_set = set(inv.extraneous_ids)
+
+        new_checked = []
+        new_extraneous = []
+        for sid in scan_ids:
+            sid = sid.strip()
+            if not sid:
+                continue
+            if sid in in_batch:
+                if sid not in checked_set:
+                    checked_set.add(sid)
+                    new_checked.append(sid)
+            else:
+                if sid not in extraneous_set:
+                    extraneous_set.add(sid)
+                    new_extraneous.append(sid)
+
+        inv.checked_ids = sorted(checked_set)
+        inv.extraneous_ids = sorted(extraneous_set)
+        self.save_inventory(inv)
+
+        return {
+            "new_checked": new_checked,
+            "new_extraneous": new_extraneous,
+            "duplicate_checked": [sid for sid in scan_ids
+                                   if sid.strip() in in_batch and sid.strip() in set(inv.checked_ids) - set(new_checked)],
         }

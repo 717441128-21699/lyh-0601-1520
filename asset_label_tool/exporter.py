@@ -7,15 +7,22 @@ from .printer import _create_label_image
 
 
 def validate_pdf_layout_params(paper_size: str, cols: Optional[int], rows: Optional[int],
-                               margin_mm: float, gap_mm: float) -> Optional[str]:
+                               margin_mm: float, gap_mm: float,
+                               label_w_mm: float, label_h_mm: float) -> Optional[str]:
     if paper_size not in PAPER_SIZES:
         return f"纸张规格 '{paper_size}' 无效，可选: {', '.join(PAPER_SIZES.keys())}"
 
     if cols is not None and cols <= 0:
-        return f"列数 {cols} 无效，必须 >= 1（建议 1~6，根据纸张和标签尺寸调整）"
+        ps = PAPER_SIZES[paper_size]
+        available_w = ps["width"] - 2 * margin_mm
+        max_cols = max(1, int((available_w + gap_mm) / (label_w_mm + gap_mm)))
+        return f"列数 {cols} 无效，必须 >= 1。当前纸张最多可放 {max_cols} 列（建议 1~{max_cols}）"
 
     if rows is not None and rows <= 0:
-        return f"行数 {rows} 无效，必须 >= 1（建议 1~20，根据纸张和标签尺寸调整）"
+        ps = PAPER_SIZES[paper_size]
+        available_h = ps["height"] - 2 * margin_mm
+        max_rows = max(1, int((available_h + gap_mm) / (label_h_mm + gap_mm)))
+        return f"行数 {rows} 无效，必须 >= 1。当前纸张最多可放 {max_rows} 行（建议 1~{max_rows}）"
 
     if margin_mm < 0:
         return f"页边距 {margin_mm}mm 无效，必须 >= 0（建议 5~20mm）"
@@ -28,6 +35,23 @@ def validate_pdf_layout_params(paper_size: str, cols: Optional[int], rows: Optio
 
     if margin_mm * 2 >= min(pw, ph):
         return f"页边距 {margin_mm}mm 过大，纸张仅 {pw}×{ph}mm，边距之和已超过纸张短边"
+
+    available_w = pw - 2 * margin_mm
+    available_h = ph - 2 * margin_mm
+
+    if cols is not None:
+        total_w = cols * label_w_mm + (cols - 1) * gap_mm
+        if total_w > available_w + 0.5:
+            max_cols = max(1, int((available_w + gap_mm) / (label_w_mm + gap_mm)))
+            return (f"指定列数 {cols} × 标签宽度 {label_w_mm}mm + 间距 = {total_w:.1f}mm，"
+                    f"超出可用宽度 {available_w:.1f}mm。当前纸张最多可放 {max_cols} 列")
+
+    if rows is not None:
+        total_h = rows * label_h_mm + (rows - 1) * gap_mm
+        if total_h > available_h + 0.5:
+            max_rows = max(1, int((available_h + gap_mm) / (label_h_mm + gap_mm)))
+            return (f"指定行数 {rows} × 标签高度 {label_h_mm}mm + 间距 = {total_h:.1f}mm，"
+                    f"超出可用高度 {available_h:.1f}mm。当前纸张最多可放 {max_rows} 行")
 
     return None
 
@@ -295,7 +319,11 @@ def run_export(args):
         margin = getattr(args, "margin", 10.0)
         gap = getattr(args, "gap", 3.0)
 
-        param_err = validate_pdf_layout_params(paper_size, cols, rows, margin, gap)
+        size_cfg = LABEL_SIZES.get(label_size, LABEL_SIZES["medium"])
+        lw_mm = size_cfg["width"] * 0.3
+        lh_mm = size_cfg["height"] * 0.3
+
+        param_err = validate_pdf_layout_params(paper_size, cols, rows, margin, gap, lw_mm, lh_mm)
         if param_err:
             print(f"[参数错误] {param_err}")
             return

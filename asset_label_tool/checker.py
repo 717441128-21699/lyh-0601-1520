@@ -1,5 +1,7 @@
 import os
+import csv
 from typing import List, Optional
+from collections import defaultdict
 from .models import Asset, BatchRecord, LABEL_SIZES, CODE_STYLES
 from .store import Store
 from .printer import print_labels, _create_label_image
@@ -41,35 +43,147 @@ def reprint_batch(store: Store, batch_id: str, output_dir: str) -> Optional[List
     return files
 
 
+STATUS_LABELS = {
+    "checked": "已贴",
+    "printed_not_checked": "已打印未贴",
+    "unprinted_not_checked": "未打印未贴",
+    "extraneous": "清单外",
+}
+
+
 def _format_inventory_progress(progress: dict) -> str:
     lines = []
-    lines.append("=" * 60)
+    lines.append("=" * 70)
     lines.append(f"  盘点批次进度: {progress['name']}")
-    lines.append("=" * 60)
+    lines.append("=" * 70)
     group_cn = "位置" if progress["group_by"] == "location" else "责任人"
     lines.append(f"  分组方式: 按{group_cn}")
     lines.append(f"  {group_cn}:  {progress['group_value']}")
     lines.append(f"  创建时间: {progress['created_at']}")
-    lines.append("-" * 60)
+    lines.append("-" * 70)
     total = progress["total"]
-    printed = progress["printed"]
-    unprinted = progress["unprinted"]
-    pct = (printed / total * 100) if total > 0 else 0
-    bar_len = 30
-    filled = int(bar_len * printed / total) if total > 0 else 0
-    bar = "█" * filled + "░" * (bar_len - filled)
-    lines.append(f"  进度:   |{bar}| {printed}/{total} ({pct:.1f}%)")
-    lines.append(f"  已打印: {printed}")
-    lines.append(f"  未打印: {unprinted}")
-    if unprinted:
-        lines.append("")
-        lines.append("  待补打资产:")
-        for aid in progress["unprinted_ids"][:20]:
-            lines.append(f"    - {aid}")
-        if len(progress["unprinted_ids"]) > 20:
-            lines.append(f"    ... 及其他 {len(progress['unprinted_ids']) - 20} 条")
-    lines.append("=" * 60)
+    lines.append(f"  批次内资产总数: {total}")
+    lines.append(f"  ✔ 已贴 (核对通过):    {progress['checked_count']}")
+    lines.append(f"  ⚠ 已打印未贴 (待现场): {progress['printed_not_checked_count']}")
+    lines.append(f"  ✘ 未打印未贴 (需补打): {progress['unprinted_not_checked_count']}")
+    lines.append(f"  ? 清单外扫码 (异常):  {progress['extraneous_count']}")
+    lines.append("-" * 70)
+
+    def _bar(curr, total, length=30):
+        if total == 0:
+            return "░" * length
+        filled = int(length * curr / total)
+        return "█" * filled + "░" * (length - filled)
+
+    pct = (progress["checked_count"] / total * 100) if total > 0 else 0
+    lines.append(f"  已贴进度: |{_bar(progress['checked_count'], total)}| {progress['checked_count']}/{total} ({pct:.1f}%)")
+    pct2 = (progress["printed_count"] / total * 100) if total > 0 else 0
+    lines.append(f"  打印进度: |{_bar(progress['printed_count'], total)}| {progress['printed_count']}/{total} ({pct2:.1f}%)")
+    lines.append("=" * 70)
     return "\n".join(lines)
+
+
+def _export_diff_csv(store: Store, progress: dict, output_path: str, group_summary: bool = True):
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
+
+    rows = []
+    checked_set = set(progress["checked_ids"])
+    extraneous_set = set(progress["extraneous_ids"])
+    unprinted_set = set(progress["unprinted_ids"])
+
+    all_augmented_ids = progress["all_ids"] + list(extraneous_set - set(progress["all_ids"]))
+
+    for aid in all_augmented_ids:
+        asset = store.get_asset(aid)
+        if aid in extraneous_set and aid not in set(progress["all_ids"]):
+            status = "清单外扫码"
+        elif aid in checked_set:
+            status = "已贴"
+        elif aid in unprinted_set:
+            status = "未打印未贴"
+        else:
+            status = "已打印未贴"
+        row = {
+            "asset_id": aid,
+            "name": asset.name if asset else "",
+            "location": asset.location if asset else "",
+            "responsible": asset.responsible if asset else "",
+            "category": asset.category if asset else "",
+            "status": status,
+            "print_batch": asset.print_batch if asset else "",
+            "printed": "是" if asset and asset.printed else ("未知" if not asset else "否"),
+            "checked": "是" if aid in checked_set else "否",
+            "note": "",
+        }
+        if status == "清单外扫码":
+            row["note"] = "不属于当前盘点批次，请确认资产归属"
+        elif status == "未打印未贴":
+            if asset:
+                mf = asset.missing_fields()
+                if mf:
+                    row["note"] = f"打印时被跳过，缺字段: {', '.join(mf)}"
+                else:
+                    row["note"] = "需要补打标签"
+        rows.append(row)
+
+    with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
+        fieldnames = list(rows[0].keys()) if rows else []
+        headers_cn = {
+            "asset_id": "资产编号",
+            "name": "资产名称",
+            "location": "位置",
+            "responsible": "责任人",
+            "category": "类别",
+            "status": "状态",
+            "print_batch": "打印批次",
+            "printed": "是否已打印",
+            "checked": "是否已贴",
+            "note": "备注",
+        }
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writerow(headers_cn)
+        for r in rows:
+            writer.writerow(r)
+
+    if group_summary:
+        summary_path = os.path.splitext(output_path)[0] + "_summary.csv"
+        _export_summary_csv(store, rows, summary_path, progress["group_by"])
+
+
+def _export_summary_csv(store: Store, rows: list, output_path: str, group_by: str):
+    group_key_cn = "责任人" if group_by == "responsible" else "位置"
+
+    by_status = defaultdict(int)
+    by_group_status = defaultdict(lambda: defaultdict(int))
+
+    for r in rows:
+        status = r["status"]
+        by_status[status] += 1
+        gkey = r["responsible"] if group_by == "responsible" else r["location"]
+        if not gkey:
+            gkey = "(未设置)"
+        by_group_status[gkey][status] += 1
+
+    with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f)
+        all_statuses = ["已贴", "已打印未贴", "未打印未贴", "清单外扫码"]
+
+        f.write(f"差异汇总表（按{group_key_cn}）\n".encode("utf-8-sig").decode("utf-8-sig"))
+        f.seek(0, os.SEEK_END)
+        writer.writerow([group_key_cn] + all_statuses + ["合计"])
+        grand = {s: 0 for s in all_statuses}
+        for gkey in sorted(by_group_status.keys()):
+            rec = by_group_status[gkey]
+            line = [gkey]
+            total = 0
+            for s in all_statuses:
+                v = rec.get(s, 0)
+                grand[s] += v
+                total += v
+                line.append(v)
+            line.append(total)
+            writer.writerow(line)
+        writer.writerow(["合计"] + [grand[s] for s in all_statuses] + [sum(grand.values())])
 
 
 def run_check(args):
@@ -81,47 +195,87 @@ def run_check(args):
             print("[提示] 暂无盘点批次")
             return
         print("[盘点批次列表]")
-        print("-" * 70)
-        print(f"{'批次名':<30} {'分组':<10} {'分组值':<20} {'资产数':<8} {'创建时间'}")
-        print("-" * 70)
+        print("-" * 90)
+        print(f"{'批次名':<25} {'分组':<6} {'分组值':<18} {'总计':<7} {'已贴':<6} {'已打印未贴':<10} {'未打印':<8} {'清单外':<8} {'创建时间'}")
+        print("-" * 90)
         for inv in invs:
             prog = store.get_inventory_progress(inv.name)
-            total = prog["total"] if prog else len(inv.asset_ids)
-            printed = prog["printed"] if prog else 0
             group_cn = "位置" if inv.group_by == "location" else "责任人"
-            print(f"{inv.name:<30} {group_cn:<10} {inv.group_value[:18]:<20} {f'{printed}/{total}':<8} {inv.created_at}")
-        print("-" * 70)
+            if prog:
+                print(f"{inv.name:<25} {group_cn:<6} {prog['group_value'][:16]:<18}"
+                      f" {prog['total']:<7} {prog['checked_count']:<6}"
+                      f" {prog['printed_not_checked_count']:<10}"
+                      f" {prog['unprinted_count']:<8}"
+                      f" {prog['extraneous_count']:<8}"
+                      f" {inv.created_at}")
+            else:
+                print(f"{inv.name:<25} {group_cn:<6} {inv.group_value[:16]:<18}"
+                      f" {len(inv.asset_ids):<7} - - - - {inv.created_at}")
+        print("-" * 90)
         print(f"共 {len(invs)} 个盘点批次")
         return
 
-    if getattr(args, "inventory", None):
-        progress = store.get_inventory_progress(args.inventory)
-        if not progress:
-            print(f"[错误] 盘点批次 '{args.inventory}' 不存在")
-            return
-        print(_format_inventory_progress(progress))
-        return
+    inv_name = getattr(args, "inventory", None)
+    inv_detail_name = getattr(args, "inventory_detail", None)
+    diff_name = getattr(args, "export_diff", None)
 
-    if getattr(args, "inventory_detail", None):
-        progress = store.get_inventory_progress(args.inventory_detail)
+    target_inv = inv_name or inv_detail_name or diff_name
+
+    if target_inv:
+        progress = store.get_inventory_progress(target_inv)
         if not progress:
-            print(f"[错误] 盘点批次 '{args.inventory_detail}' 不存在")
+            print(f"[错误] 盘点批次 '{target_inv}' 不存在")
             return
+
+        if diff_name:
+            out_path = args.export_diff
+            if not out_path.endswith(".csv"):
+                out_path += ".csv"
+            _export_diff_csv(store, progress, out_path, group_summary=True)
+            print(f"[差异表已导出] {os.path.abspath(out_path)}")
+            print(f"  含 {len(progress['all_ids']) + len(progress['extraneous_ids'])} 条明细 + 按分组汇总")
+            summary_path = os.path.splitext(out_path)[0] + "_summary.csv"
+            if os.path.exists(summary_path):
+                print(f"  汇总表: {os.path.abspath(summary_path)}")
+            return
+
         print(_format_inventory_progress(progress))
-        print("")
-        print("[资产明细]")
-        print("-" * 90)
-        print(f"{'状态':<6} {'资产编号':<20} {'名称':<18} {'位置':<22} {'责任人':<10} {'打印批次'}")
-        print("-" * 90)
-        all_ids = progress["printed_ids"] + progress["unprinted_ids"]
-        printed_set = set(progress["printed_ids"])
-        for aid in all_ids:
-            asset = store.get_asset(aid)
-            if not asset:
-                continue
-            status = "✔已打" if aid in printed_set else "✘未打"
-            print(f"{status:<6} {asset.asset_id:<20} {asset.name[:16]:<18} {asset.location[:20]:<22} {asset.responsible[:10]:<10} {asset.print_batch or '-'}")
-        print("-" * 90)
+
+        if inv_detail_name:
+            print("")
+            print("[资产明细]")
+            print("-" * 120)
+            print(f"{'状态':<12} {'资产编号':<20} {'名称':<18} {'位置':<22} {'责任人':<12} {'打印批次':<10} {'备注'}")
+            print("-" * 120)
+            all_ids = progress["all_ids"] + [e for e in progress["extraneous_ids"] if e not in set(progress["all_ids"])]
+            checked_set = set(progress["checked_ids"])
+            extraneous_set = set(progress["extraneous_ids"])
+            unprinted_set = set(progress["unprinted_ids"])
+            for aid in all_ids:
+                asset = store.get_asset(aid)
+                if aid in extraneous_set and aid not in set(progress["all_ids"]):
+                    status = "? 清单外"
+                    note = "不属于本批次"
+                elif aid in checked_set:
+                    status = "✔ 已贴"
+                    note = ""
+                elif aid in unprinted_set:
+                    status = "✘ 未打印"
+                    if asset:
+                        mf = asset.missing_fields()
+                        note = f"缺字段: {', '.join(mf)}" if mf else "需补打"
+                    else:
+                        note = "资产不存在"
+                else:
+                    status = "⚠ 已打印未贴"
+                    note = ""
+                print(f"{status:<12} {aid:<20}"
+                      f" {(asset.name[:16] if asset else ''):<18}"
+                      f" {(asset.location[:20] if asset else ''):<22}"
+                      f" {(asset.responsible[:10] if asset else ''):<12}"
+                      f" {(asset.print_batch[:8] if asset and asset.print_batch else '-'):<10}"
+                      f" {note}")
+            print("-" * 120)
         return
 
     if getattr(args, "delete_inventory", None):

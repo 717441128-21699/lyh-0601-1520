@@ -1,0 +1,60 @@
+[
+  {
+    "batch_id": "7a8e6898",
+    "timestamp": "2026-06-12 04:15:46",
+    "asset_ids": [
+      "AST010"
+    ],
+    "label_size": "small",
+    "code_style": "barcode",
+    "output_path": "D:\\trae-bz\\TraeProjects\\1520\\labels_output\\INV_Q2_孙七",
+    "count": 1
+  },
+  {
+    "batch_id": "d3aca2d9",
+    "timestamp": "2026-06-12 04:15:46",
+    "asset_ids": [
+      "AST001",
+      "AST002"
+    ],
+    "label_size": "small",
+    "code_style": "barcode",
+    "output_path": "D:\\trae-bz\\TraeProjects\\1520\\labels_output\\INV_Q2_张三",
+    "count": 2
+  },
+  {
+    "batch_id": "45336114",
+    "timestamp": "2026-06-12 04:15:46",
+    "asset_ids": [
+      "AST003",
+      "AST004"
+    ],
+    "label_size": "small",
+    "code_style": "barcode",
+    "output_path": "D:\\trae-bz\\TraeProjects\\1520\\labels_output\\INV_Q2_李四",
+    "count": 2
+  },
+  {
+    "batch_id": "6b22b926",
+    "timestamp": "2026-06-12 04:15:46",
+    "asset_ids": [
+      "AST007",
+      "AST008"
+    ],
+    "label_size": "small",
+    "code_style": "barcode",
+    "output_path": "D:\\trae-bz\\TraeProjects\\1520\\labels_output\\INV_Q2_赵六",
+    "count": 2
+  },
+  {
+    "batch_id": "b02183e2",
+    "timestamp": "2026-06-12 04:17:27",
+    "asset_ids": [
+      "AST005"
+    ],
+    "label_size": "small",
+    "code_style": "barcode",
+    "output_path": "D:\\trae-bz\\TraeProjects\\1520\\labels_output\\INV_Q2_王五",
+    "count": 1
+  }
+]

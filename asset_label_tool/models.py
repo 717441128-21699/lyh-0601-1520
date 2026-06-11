@@ -101,6 +101,8 @@ class InventoryBatch:
     group_by: str
     group_value: str
     asset_ids: List[str] = field(default_factory=list)
+    checked_ids: List[str] = field(default_factory=list)
+    extraneous_ids: List[str] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     def to_dict(self) -> dict:
@@ -113,6 +115,8 @@ class InventoryBatch:
             group_by=d.get("group_by", ""),
             group_value=d.get("group_value", ""),
             asset_ids=d.get("asset_ids", []),
+            checked_ids=d.get("checked_ids", []),
+            extraneous_ids=d.get("extraneous_ids", []),
             created_at=d.get("created_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
 

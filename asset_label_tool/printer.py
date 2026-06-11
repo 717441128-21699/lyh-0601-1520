@@ -321,17 +321,18 @@ def run_print(args):
         inv_counter = 1
         skip_missing = getattr(args, "skip_missing", False)
         for gvalue in sorted(groups.keys()):
-            group_assets = groups[gvalue]
+            group_assets = sorted(groups[gvalue], key=lambda a: a.asset_id)
+            all_ids = [a.asset_id for a in group_assets]
+
             valid = []
-            skipped = 0
+            skipped = []
             for a in group_assets:
                 missing = a.missing_fields()
                 if missing and skip_missing:
-                    skipped += 1
+                    skipped.append(a)
                 else:
                     valid.append(a)
-            if not valid:
-                print(f"  [跳过组] {group_display}={gvalue}: 无可打印资产")
+            if not valid and not skipped:
                 continue
 
             if base_name:
@@ -344,17 +345,32 @@ def run_print(args):
                 name=inv_name,
                 group_by=inv_group,
                 group_value=gvalue,
-                asset_ids=[a.asset_id for a in valid],
+                asset_ids=all_ids,
             )
             store.save_inventory(inv)
 
-            group_dir = os.path.join(output_root, inv_name)
-            batch, files = print_labels(store, valid, label_size, code_style, group_dir)
+            printed_msg = ""
+            if valid:
+                group_dir = os.path.join(output_root, inv_name)
+                batch, files = print_labels(store, valid, label_size, code_style, group_dir)
+                printed_msg = (f"    已打印: {len(valid)} 张，批次号: {batch.batch_id}\n"
+                               f"    目录: {os.path.abspath(group_dir)}")
+            else:
+                printed_msg = "    已打印: 0（全部因缺字段跳过，保留于盘点批次内，补齐字段后可补打）"
 
-            print(f"  [{inv_name}] {group_display}={gvalue}")
-            print(f"    资产: {len(valid)} 张" + (f" (跳过 {skipped} 张)" if skipped else ""))
-            print(f"    批次号: {batch.batch_id}")
-            print(f"    目录: {os.path.abspath(group_dir)}")
+            skipped_msg = ""
+            if skipped:
+                skipped_msg = f"    未打印（缺字段）: {len(skipped)} 张 [{', '.join(a.asset_id for a in skipped[:5])}"
+                if len(skipped) > 5:
+                    skipped_msg += f" ...]"
+                else:
+                    skipped_msg += "]"
+
+            print(f"  [{inv_name}] {group_display}={gvalue}  总计{len(all_ids)}张")
+            if printed_msg:
+                print(printed_msg)
+            if skipped_msg:
+                print(skipped_msg)
             inv_counter += 1
 
         print("-" * 60)

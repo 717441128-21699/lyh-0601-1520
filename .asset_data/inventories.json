@@ -1,0 +1,82 @@
+[
+  {
+    "name": "INV_Q2_(未设置责任人)",
+    "group_by": "responsible",
+    "group_value": "(未设置责任人)",
+    "asset_ids": [
+      "AST006",
+      "AST009"
+    ],
+    "checked_ids": [],
+    "extraneous_ids": [],
+    "created_at": "2026-06-12 04:15:46"
+  },
+  {
+    "name": "INV_Q2_孙七",
+    "group_by": "responsible",
+    "group_value": "孙七",
+    "asset_ids": [
+      "AST010"
+    ],
+    "checked_ids": [],
+    "extraneous_ids": [],
+    "created_at": "2026-06-12 04:15:46"
+  },
+  {
+    "name": "INV_Q2_张三",
+    "group_by": "responsible",
+    "group_value": "张三",
+    "asset_ids": [
+      "AST001",
+      "AST002"
+    ],
+    "checked_ids": [
+      "AST001",
+      "AST002"
+    ],
+    "extraneous_ids": [
+      "AST003",
+      "XTRA001",
+      "张三",
+      "重复扫"
+    ],
+    "created_at": "2026-06-12 04:15:46"
+  },
+  {
+    "name": "INV_Q2_李四",
+    "group_by": "responsible",
+    "group_value": "李四",
+    "asset_ids": [
+      "AST003",
+      "AST004"
+    ],
+    "checked_ids": [],
+    "extraneous_ids": [],
+    "created_at": "2026-06-12 04:15:46"
+  },
+  {
+    "name": "INV_Q2_王五",
+    "group_by": "responsible",
+    "group_value": "王五",
+    "asset_ids": [
+      "AST005"
+    ],
+    "checked_ids": [
+      "AST005"
+    ],
+    "extraneous_ids": [],
+    "created_at": "2026-06-12 04:15:46"
+  },
+  {
+    "name": "INV_Q2_赵六",
+    "group_by": "responsible",
+    "group_value": "赵六",
+    "asset_ids": [
+      "AST007",
+      "AST008"
+    ],
+    "checked_ids": [],
+    "extraneous_ids": [],
+    "created_at": "2026-06-12 04:15:46"
+  }
+]

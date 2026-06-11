@@ -1,0 +1,102 @@
+[
+  {
+    "asset_id": "AST001",
+    "name": "笔记本电脑",
+    "location": "3楼-办公区A",
+    "responsible": "张三",
+    "category": "综合资产",
+    "printed": true,
+    "print_batch": "d3aca2d9",
+    "created_at": "2026-06-12 04:15:19"
+  },
+  {
+    "asset_id": "AST002",
+    "name": "显示器",
+    "location": "3楼-办公区A",
+    "responsible": "张三",
+    "category": "综合资产",
+    "printed": true,
+    "print_batch": "d3aca2d9",
+    "created_at": "2026-06-12 04:15:19"
+  },
+  {
+    "asset_id": "AST003",
+    "name": "办公桌",
+    "location": "3楼-办公区B",
+    "responsible": "李四",
+    "category": "综合资产",
+    "printed": true,
+    "print_batch": "45336114",
+    "created_at": "2026-06-12 04:15:19"
+  },
+  {
+    "asset_id": "AST004",
+    "name": "办公椅",
+    "location": "3楼-办公区B",
+    "responsible": "李四",
+    "category": "综合资产",
+    "printed": true,
+    "print_batch": "45336114",
+    "created_at": "2026-06-12 04:15:19"
+  },
+  {
+    "asset_id": "AST005",
+    "name": "碎纸机",
+    "location": "3楼-办公区C",
+    "responsible": "王五",
+    "category": "综合资产",
+    "printed": true,
+    "print_batch": "b02183e2",
+    "created_at": "2026-06-12 04:15:19"
+  },
+  {
+    "asset_id": "AST006",
+    "name": "打印机",
+    "location": "3楼-办公区C",
+    "responsible": "",
+    "category": "综合资产",
+    "printed": false,
+    "print_batch": null,
+    "created_at": "2026-06-12 04:15:19"
+  },
+  {
+    "asset_id": "AST007",
+    "name": "投影仪",
+    "location": "2楼-会议室A",
+    "responsible": "赵六",
+    "category": "综合资产",
+    "printed": true,
+    "print_batch": "6b22b926",
+    "created_at": "2026-06-12 04:15:19"
+  },
+  {
+    "asset_id": "AST008",
+    "name": "白板",
+    "location": "2楼-会议室A",
+    "responsible": "赵六",
+    "category": "综合资产",
+    "printed": true,
+    "print_batch": "6b22b926",
+    "created_at": "2026-06-12 04:15:19"
+  },
+  {
+    "asset_id": "AST009",
+    "name": "会议桌",
+    "location": "2楼-会议室B",
+    "responsible": "",
+    "category": "综合资产",
+    "printed": false,
+    "print_batch": null,
+    "created_at": "2026-06-12 04:15:19"
+  },
+  {
+    "asset_id": "AST010",
+    "name": "文件柜",
+    "location": "2楼-会议室B",
+    "responsible": "孙七",
+    "category": "综合资产",
+    "printed": true,
+    "print_batch": "7a8e6898",
+    "created_at": "2026-06-12 04:15:19"
+  }
+]

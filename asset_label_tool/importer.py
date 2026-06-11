@@ -29,12 +29,16 @@ def _read_rows(file_path: str, sheet: Optional[str] = None) -> Tuple[List[dict],
         rows = []
         with open(file_path, "r", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
-            headers = reader.fieldnames or []
+            headers = [h for h in (reader.fieldnames or []) if h is not None]
             normalized = {h: _normalize_header(h) for h in headers}
             for idx, row in enumerate(reader, start=2):
                 mapped = {"_row": idx}
-                for orig, norm in normalized.items():
-                    mapped[norm] = row.get(orig, "").strip()
+                try:
+                    for orig, norm in normalized.items():
+                        val = row.get(orig, "")
+                        mapped[norm] = "" if val is None else str(val).strip()
+                except Exception:
+                    pass
                 rows.append(mapped)
             present = set(normalized.values())
             missing = [c for c in FIELD_MAPPING.keys() if c not in present]
@@ -60,10 +64,13 @@ def _read_rows(file_path: str, sheet: Optional[str] = None) -> Tuple[List[dict],
         rows = []
         for idx, row in enumerate(raw_rows[1:], start=2):
             row_data = {"_row": idx}
-            for i, orig in enumerate(headers):
-                norm = normalized.get(orig, orig)
-                val = row[i] if i < len(row) else ""
-                row_data[norm] = str(val or "").strip()
+            try:
+                for i, orig in enumerate(headers):
+                    norm = normalized.get(orig, orig)
+                    val = row[i] if i < len(row) else ""
+                    row_data[norm] = "" if val is None else str(val).strip()
+            except Exception:
+                pass
             rows.append(row_data)
         present = set(normalized.values())
         missing = [c for c in FIELD_MAPPING.keys() if c not in present]
