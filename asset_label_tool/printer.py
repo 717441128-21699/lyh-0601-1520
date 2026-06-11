@@ -2,7 +2,7 @@ import os
 from typing import List, Optional, Tuple
 from io import BytesIO
 
-from .models import Asset, BatchRecord, LABEL_SIZES, CODE_STYLES
+from .models import Asset, BatchRecord, LABEL_SIZES, CODE_STYLES, PrintTask
 from .store import Store
 
 
@@ -130,6 +130,42 @@ def _create_label_image(asset: Asset, label_size: str, code_style: str) -> "PIL.
     return img
 
 
+def _resolve_assets(store: Store, args) -> List[Asset]:
+    if getattr(args, "task", None):
+        task = store.get_task(args.task)
+        if not task:
+            raise ValueError(f"打印任务 '{args.task}' 不存在")
+        return store.filter_assets(
+            category=task.category or None,
+            location=task.location or None,
+            responsible=task.responsible or None,
+            unprinted_only=False,
+        )
+
+    if getattr(args, "asset_ids", None):
+        assets = []
+        for aid in args.asset_ids:
+            a = store.get_asset(aid)
+            if a:
+                assets.append(a)
+        return assets
+
+    category = getattr(args, "category", None)
+    location = getattr(args, "location", None)
+    responsible = getattr(args, "responsible", None)
+    unprinted = not getattr(args, "all", False)
+
+    if category or location or responsible:
+        return store.filter_assets(
+            category=category or None,
+            location=location or None,
+            responsible=responsible or None,
+            unprinted_only=unprinted,
+        )
+
+    return store.get_unprinted_assets()
+
+
 def print_labels(store: Store, assets: List[Asset], label_size: str,
                  code_style: str, output_dir: str) -> Tuple[BatchRecord, List[str]]:
     os.makedirs(output_dir, exist_ok=True)
@@ -156,47 +192,106 @@ def print_labels(store: Store, assets: List[Asset], label_size: str,
     return batch, generated_files
 
 
+def save_print_task(store: Store, name: str, args) -> PrintTask:
+    task = PrintTask(
+        name=name,
+        category=getattr(args, "category", "") or "",
+        location=getattr(args, "location", "") or "",
+        responsible=getattr(args, "responsible", "") or "",
+        label_size=getattr(args, "label_size", None) or "medium",
+        code_style=getattr(args, "code_style", None) or "barcode",
+        skip_missing=getattr(args, "skip_missing", False),
+    )
+    store.save_task(task)
+    return task
+
+
 def run_print(args):
     store = Store(args.data_dir)
 
-    if args.label_size not in LABEL_SIZES:
-        print(f"[错误] 无效的标签尺寸: {args.label_size}")
+    if getattr(args, "save_task", None):
+        task = save_print_task(store, args.save_task, args)
+        print(f"[任务已保存] {task.name}")
+        print(f"  类别: {task.category or '(全部)'}")
+        print(f"  位置: {task.location or '(全部)'}")
+        print(f"  责任人: {task.responsible or '(全部)'}")
+        print(f"  标签尺寸: {task.label_size}")
+        print(f"  码样式: {task.code_style}")
+        return
+
+    if getattr(args, "list_tasks", False):
+        tasks = store.get_all_tasks()
+        if not tasks:
+            print("[提示] 暂无保存的打印任务")
+            return
+        print("[常用打印任务]")
+        print("-" * 70)
+        for t in tasks:
+            filters = []
+            if t.category: filters.append(f"类别={t.category}")
+            if t.location: filters.append(f"位置~{t.location}")
+            if t.responsible: filters.append(f"责任人~{t.responsible}")
+            filter_str = ", ".join(filters) if filters else "(全部资产)"
+            print(f"  {t.name:<15} {t.label_size:<8} {t.code_style:<10} {filter_str}")
+        print("-" * 70)
+        print(f"共 {len(tasks)} 个任务")
+        return
+
+    if getattr(args, "delete_task", None):
+        if store.delete_task(args.delete_task):
+            print(f"[已删除] 任务 '{args.delete_task}'")
+        else:
+            print(f"[错误] 任务 '{args.delete_task}' 不存在")
+        return
+
+    label_size = getattr(args, "label_size", None)
+    code_style = getattr(args, "code_style", None)
+    skip_missing = getattr(args, "skip_missing", False)
+
+    if getattr(args, "task", None):
+        task = store.get_task(args.task)
+        if not task:
+            print(f"[错误] 打印任务 '{args.task}' 不存在")
+            return
+        if label_size is None:
+            label_size = task.label_size
+        if code_style is None:
+            code_style = task.code_style
+        if not args.skip_missing:
+            skip_missing = task.skip_missing
+
+    if label_size is None:
+        label_size = "medium"
+    if code_style is None:
+        code_style = "barcode"
+
+    if label_size not in LABEL_SIZES:
+        print(f"[错误] 无效的标签尺寸: {label_size}")
         print(f"  可选: {', '.join(LABEL_SIZES.keys())}")
         return
 
-    if args.code_style not in CODE_STYLES:
-        print(f"[错误] 无效的码样式: {args.code_style}")
+    if code_style not in CODE_STYLES:
+        print(f"[错误] 无效的码样式: {code_style}")
         print(f"  可选: {', '.join(CODE_STYLES)}")
         return
 
-    assets = []
-    if args.category:
-        assets = store.get_assets_by_category(args.category)
-        if not assets:
-            print(f"[提示] 类别 '{args.category}' 下没有资产")
-            return
-    elif args.asset_ids:
-        for aid in args.asset_ids:
-            a = store.get_asset(aid)
-            if a:
-                assets.append(a)
-            else:
-                print(f"[警告] 资产编号 '{aid}' 不存在，已跳过")
-        if not assets:
-            print("[错误] 没有找到指定的资产")
-            return
-    else:
-        assets = store.get_unprinted_assets()
-        if not assets:
-            print("[提示] 没有未打印的资产")
-            return
+    try:
+        assets = _resolve_assets(store, args)
+    except ValueError as e:
+        print(f"[错误] {e}")
+        return
 
-    skip_missing = args.skip_missing
+    if not assets:
+        print("[提示] 没有找到匹配的资产记录")
+        return
+
     valid_assets = []
+    skipped_count = 0
     for a in assets:
         missing = a.missing_fields()
         if missing and skip_missing:
-            print(f"[跳过] {a.asset_id} 缺失字段: {', '.join(missing)}")
+            skipped_count += 1
+            print(f"  [跳过] {a.asset_id} 缺失字段: {', '.join(missing)}")
         else:
             valid_assets.append(a)
 
@@ -204,12 +299,19 @@ def run_print(args):
         print("[错误] 没有可打印的资产（所有记录均缺失必填字段）")
         return
 
-    output_dir = args.output or os.path.join(".", "labels_output")
-    batch, files = print_labels(store, valid_assets, args.label_size, args.code_style, output_dir)
+    output_dir = getattr(args, "output", None) or os.path.join(".", "labels_output")
+
+    task_name = getattr(args, "task", None)
+    if task_name:
+        print(f"[使用任务] {task_name}")
+
+    batch, files = print_labels(store, valid_assets, label_size, code_style, output_dir)
 
     print(f"[打印完成] 批次号: {batch.batch_id}")
-    print(f"  标签尺寸: {args.label_size} ({LABEL_SIZES[args.label_size]['width']}x{LABEL_SIZES[args.label_size]['height']}px)")
-    print(f"  码样式: {args.code_style}")
+    print(f"  标签尺寸: {label_size} ({LABEL_SIZES[label_size]['width']}x{LABEL_SIZES[label_size]['height']}px)")
+    print(f"  码样式: {code_style}")
+    if skipped_count:
+        print(f"  跳过缺失字段: {skipped_count} 条")
     print(f"  打印数量: {len(files)}")
     print(f"  输出目录: {os.path.abspath(output_dir)}")
     for f in files[:5]:

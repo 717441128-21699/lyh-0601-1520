@@ -9,7 +9,7 @@ def _format_row(asset: Asset, idx: int, show_missing: bool = True) -> str:
         f"{idx:>4}",
         asset.asset_id[:20].ljust(20),
         asset.name[:16].ljust(16),
-        asset.location[:16].ljust(16),
+        asset.location[:20].ljust(20),
         asset.responsible[:10].ljust(10),
         asset.category[:10].ljust(10),
         "✔" if asset.printed else "✘",
@@ -21,13 +21,16 @@ def _format_row(asset: Asset, idx: int, show_missing: bool = True) -> str:
 
 
 def preview_assets(store: Store, category: Optional[str] = None,
-                   unprinted_only: bool = False, show_missing: bool = True) -> List[Asset]:
-    if category:
-        assets = store.get_assets_by_category(category)
-    elif unprinted_only:
-        assets = store.get_unprinted_assets()
-    else:
-        assets = store.get_all_assets()
+                   location: Optional[str] = None,
+                   responsible: Optional[str] = None,
+                   unprinted_only: bool = False,
+                   show_missing: bool = True) -> List[Asset]:
+    assets = store.filter_assets(
+        category=category,
+        location=location,
+        responsible=responsible,
+        unprinted_only=unprinted_only,
+    )
     return assets
 
 
@@ -35,9 +38,11 @@ def run_preview(args):
     store = Store(args.data_dir)
     assets = preview_assets(
         store,
-        category=args.category,
-        unprinted_only=args.unprinted,
-        show_missing=not args.hide_missing,
+        category=getattr(args, "category", None),
+        location=getattr(args, "location", None),
+        responsible=getattr(args, "responsible", None),
+        unprinted_only=getattr(args, "unprinted", False),
+        show_missing=not getattr(args, "hide_missing", False),
     )
 
     if not assets:
@@ -47,7 +52,7 @@ def run_preview(args):
     header = "  #  | " + " | ".join([
         "资产编号".ljust(20),
         "名称".ljust(16),
-        "位置".ljust(16),
+        "位置".ljust(20),
         "责任人".ljust(10),
         "类别".ljust(10),
         "已打印",
@@ -60,7 +65,7 @@ def run_preview(args):
 
     missing_count = 0
     for i, asset in enumerate(assets, 1):
-        print(_format_row(asset, i, show_missing=not args.hide_missing))
+        print(_format_row(asset, i, show_missing=not getattr(args, "hide_missing", False)))
         if asset.missing_fields():
             missing_count += 1
 
@@ -74,3 +79,11 @@ def run_preview(args):
     categories = store.get_categories()
     if categories:
         print(f"\n可用类别: {', '.join(categories)}")
+
+    locations = store.get_locations()
+    if locations:
+        print(f"可用位置: {len(locations)} 个 (前10: {', '.join(locations[:10])})")
+
+    responsibles = store.get_responsibles()
+    if responsibles:
+        print(f"可用责任人: {', '.join(responsibles)}")

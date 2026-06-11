@@ -1,6 +1,6 @@
 import csv
 import os
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple
 from .models import Asset
 from .store import Store
 
@@ -22,127 +22,236 @@ def _normalize_header(header: str) -> str:
     return h
 
 
-def import_csv(file_path: str, store: Store, category: Optional[str] = None,
-               auto_id: bool = False, id_prefix: str = "AST") -> dict:
-    if not os.path.exists(file_path):
-        return {"error": f"文件不存在: {file_path}"}
+def _read_rows(file_path: str, sheet: Optional[str] = None) -> Tuple[List[dict], str]:
+    ext = os.path.splitext(file_path)[1].lower()
 
-    assets = []
-    with open(file_path, "r", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        headers = reader.fieldnames or []
+    if ext in (".csv",):
+        rows = []
+        with open(file_path, "r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            headers = reader.fieldnames or []
+            normalized = {h: _normalize_header(h) for h in headers}
+            for idx, row in enumerate(reader, start=2):
+                mapped = {"_row": idx}
+                for orig, norm in normalized.items():
+                    mapped[norm] = row.get(orig, "").strip()
+                rows.append(mapped)
+        return rows, "csv"
+
+    elif ext in (".xlsx", ".xls"):
+        try:
+            import openpyxl
+        except ImportError:
+            raise ImportError("需要安装 openpyxl 库来读取 Excel 文件: pip install openpyxl")
+
+        wb = openpyxl.load_workbook(file_path, read_only=True)
+        ws = wb[sheet] if sheet else wb.active
+        raw_rows = list(ws.iter_rows(values_only=True))
+        wb.close()
+
+        if not raw_rows:
+            return [], "xlsx"
+
+        headers = [str(h or "") for h in raw_rows[0]]
         normalized = {h: _normalize_header(h) for h in headers}
 
-        for row in reader:
-            mapped = {}
-            for orig, norm in normalized.items():
-                mapped[norm] = row.get(orig, "").strip()
-
-            if category:
-                mapped["category"] = category
-
-            if auto_id and not mapped.get("asset_id"):
-                mapped["asset_id"] = store.get_next_sequential_id(id_prefix)
-
-            if not mapped.get("asset_id"):
-                continue
-
-            assets.append(Asset.from_dict(mapped))
-
-    if not assets:
-        return {"error": "未找到有效的资产数据，请检查文件格式和表头"}
-
-    result = store.add_assets(assets, skip_duplicates=True)
-    return result
+        rows = []
+        for idx, row in enumerate(raw_rows[1:], start=2):
+            row_data = {"_row": idx}
+            for i, orig in enumerate(headers):
+                norm = normalized.get(orig, orig)
+                val = row[i] if i < len(row) else ""
+                row_data[norm] = str(val or "").strip()
+            rows.append(row_data)
+        return rows, "xlsx"
+    else:
+        raise ValueError(f"不支持的文件格式: {ext}")
 
 
-def import_excel(file_path: str, store: Store, category: Optional[str] = None,
-                 auto_id: bool = False, id_prefix: str = "AST", sheet: Optional[str] = None) -> dict:
-    try:
-        import openpyxl
-    except ImportError:
-        return {"error": "需要安装 openpyxl 库来读取 Excel 文件: pip install openpyxl"}
+def validate_assets(rows: List[dict], store: Store, category: Optional[str] = None,
+                    auto_id: bool = False, id_prefix: str = "AST") -> dict:
+    report = {
+        "total_rows": len(rows),
+        "empty_id_rows": [],
+        "duplicate_rows": [],
+        "missing_field_rows": [],
+        "auto_generated_ids": [],
+        "valid_assets": [],
+        "will_be_skipped": [],
+    }
 
-    if not os.path.exists(file_path):
-        return {"error": f"文件不存在: {file_path}"}
+    seen_ids = set()
 
-    wb = openpyxl.load_workbook(file_path, read_only=True)
-    ws = wb[sheet] if sheet else wb.active
+    db_max_num = store.get_next_sequential_number(id_prefix) - 1
+    file_max_num = 0
+    for row_data in rows:
+        asset_id = row_data.get("asset_id", "").strip()
+        if asset_id and asset_id.startswith(id_prefix):
+            try:
+                num = int(asset_id[len(id_prefix):])
+                if num > file_max_num:
+                    file_max_num = num
+            except ValueError:
+                pass
 
-    rows = list(ws.iter_rows(values_only=True))
-    if len(rows) < 2:
-        wb.close()
-        return {"error": "Excel 文件为空或只有表头"}
+    next_num = max(db_max_num, file_max_num) + 1
 
-    headers = [str(h or "") for h in rows[0]]
-    normalized = {h: _normalize_header(h) for h in headers}
-
-    assets = []
-    for row in rows[1:]:
-        row_data = {}
-        for i, orig in enumerate(headers):
-            norm = normalized.get(orig, orig)
-            val = row[i] if i < len(row) else ""
-            row_data[norm] = str(val or "").strip()
+    for row_data in rows:
+        row_num = row_data.get("_row", "?")
+        asset_id = row_data.get("asset_id", "").strip()
 
         if category:
             row_data["category"] = category
 
-        if auto_id and not row_data.get("asset_id"):
-            row_data["asset_id"] = store.get_next_sequential_id(id_prefix)
+        if not asset_id:
+            if auto_id:
+                asset_id = f"{id_prefix}{next_num:06d}"
+                next_num += 1
+                report["auto_generated_ids"].append({"row": row_num, "asset_id": asset_id})
+            else:
+                report["empty_id_rows"].append(row_num)
+                report["will_be_skipped"].append({"row": row_num, "reason": "空编号"})
+                continue
 
-        if not row_data.get("asset_id"):
+        if asset_id in seen_ids:
+            report["duplicate_rows"].append({"row": row_num, "asset_id": asset_id, "type": "文件内重复"})
+            report["will_be_skipped"].append({"row": row_num, "reason": f"编号 {asset_id} 在文件内重复"})
             continue
 
-        assets.append(Asset.from_dict(row_data))
+        if store.get_asset(asset_id):
+            report["duplicate_rows"].append({"row": row_num, "asset_id": asset_id, "type": "与数据库重复"})
+            report["will_be_skipped"].append({"row": row_num, "reason": f"编号 {asset_id} 已存在"})
+            continue
 
-    wb.close()
+        seen_ids.add(asset_id)
 
-    if not assets:
-        return {"error": "未找到有效的资产数据，请检查文件格式和表头"}
+        asset = Asset.from_dict({**row_data, "asset_id": asset_id})
+        missing = asset.missing_fields()
+        if missing:
+            report["missing_field_rows"].append({
+                "row": row_num,
+                "asset_id": asset_id,
+                "missing": missing,
+            })
 
-    result = store.add_assets(assets, skip_duplicates=True)
-    return result
+        report["valid_assets"].append(asset)
+
+    report["new_count"] = len(report["valid_assets"])
+    return report
+
+
+def import_file(file_path: str, store: Store, category: Optional[str] = None,
+                auto_id: bool = False, id_prefix: str = "AST",
+                sheet: Optional[str] = None, dry_run: bool = True) -> dict:
+    if not os.path.exists(file_path):
+        return {"error": f"文件不存在: {file_path}"}
+
+    try:
+        rows, _ = _read_rows(file_path, sheet)
+    except ImportError as e:
+        return {"error": str(e)}
+    except ValueError as e:
+        return {"error": str(e)}
+
+    if not rows:
+        return {"error": "文件为空或只有表头"}
+
+    report = validate_assets(rows, store, category=category, auto_id=auto_id, id_prefix=id_prefix)
+
+    if dry_run:
+        report["applied"] = False
+        return report
+
+    if report["valid_assets"]:
+        result = store.add_assets(report["valid_assets"], skip_duplicates=True)
+        report["added"] = result["added"]
+        report["skipped"] = result["skipped"]
+        report["db_duplicates"] = result["duplicates"]
+    else:
+        report["added"] = []
+        report["skipped"] = []
+        report["db_duplicates"] = []
+
+    report["applied"] = True
+    return report
+
+
+def format_validation_report(report: dict) -> str:
+    lines = []
+    lines.append("=" * 60)
+    lines.append("  导入校验报告")
+    lines.append("=" * 60)
+    lines.append(f"  文件总行数:    {report['total_rows']}")
+    lines.append(f"  可新增数量:    {report['new_count']}")
+    lines.append(f"  将跳过数量:    {len(report['will_be_skipped'])}")
+    lines.append("-" * 60)
+
+    if report["auto_generated_ids"]:
+        lines.append(f"  ▶ 自动生成编号: {len(report['auto_generated_ids'])} 条")
+        for item in report["auto_generated_ids"][:10]:
+            lines.append(f"     第{item['row']}行 → {item['asset_id']}")
+        if len(report["auto_generated_ids"]) > 10:
+            lines.append(f"     ... 及其他 {len(report['auto_generated_ids']) - 10} 条")
+        lines.append("")
+
+    if report["duplicate_rows"]:
+        lines.append(f"  ⚠ 重复编号: {len(report['duplicate_rows'])} 条")
+        for item in report["duplicate_rows"][:10]:
+            lines.append(f"     第{item['row']}行 - {item['asset_id']} ({item['type']})")
+        if len(report["duplicate_rows"]) > 10:
+            lines.append(f"     ... 及其他 {len(report['duplicate_rows']) - 10} 条")
+        lines.append("")
+
+    if report["empty_id_rows"]:
+        lines.append(f"  ⚠ 空编号: {len(report['empty_id_rows'])} 条")
+        for r in report["empty_id_rows"][:10]:
+            lines.append(f"     第{r}行")
+        if len(report["empty_id_rows"]) > 10:
+            lines.append(f"     ... 及其他 {len(report['empty_id_rows']) - 10} 条")
+        lines.append("")
+
+    if report["missing_field_rows"]:
+        lines.append(f"  ⚠ 缺失必填字段: {len(report['missing_field_rows'])} 条")
+        for item in report["missing_field_rows"][:10]:
+            lines.append(f"     第{item['row']}行 - {item['asset_id']} 缺: {', '.join(item['missing'])}")
+        if len(report["missing_field_rows"]) > 10:
+            lines.append(f"     ... 及其他 {len(report['missing_field_rows']) - 10} 条")
+        lines.append("")
+
+    if report.get("applied"):
+        lines.append("-" * 60)
+        lines.append(f"  ✔ 已写入数据库: {len(report['added'])} 条")
+    else:
+        lines.append("-" * 60)
+        lines.append("  (预览模式，尚未写入数据库。使用 --apply 确认导入)")
+
+    lines.append("=" * 60)
+    return "\n".join(lines)
 
 
 def run_import(args):
     store = Store(args.data_dir)
     file_path = args.file
-    ext = os.path.splitext(file_path)[1].lower()
 
-    if ext in (".xlsx", ".xls"):
-        result = import_excel(
-            file_path, store,
-            category=args.category,
-            auto_id=args.auto_id,
-            id_prefix=args.prefix,
-            sheet=args.sheet,
-        )
-    elif ext in (".csv",):
-        result = import_csv(
-            file_path, store,
-            category=args.category,
-            auto_id=args.auto_id,
-            id_prefix=args.prefix,
-        )
-    else:
-        print(f"[错误] 不支持的文件格式: {ext}，请使用 .csv 或 .xlsx 文件")
-        return
+    dry_run = not getattr(args, "apply", False)
+
+    result = import_file(
+        file_path, store,
+        category=args.category,
+        auto_id=args.auto_id,
+        id_prefix=args.prefix,
+        sheet=args.sheet,
+        dry_run=dry_run,
+    )
 
     if "error" in result:
         print(f"[错误] {result['error']}")
         return
 
-    print(f"[导入完成]")
-    print(f"  新增: {len(result['added'])} 条")
-    if result['duplicates']:
-        print(f"  跳过重复编号: {len(result['duplicates'])} 条")
-        for did in result['duplicates'][:10]:
-            print(f"    - {did}")
-        if len(result['duplicates']) > 10:
-            print(f"    ... 及其他 {len(result['duplicates']) - 10} 条")
-    if result['skipped']:
-        print(f"  覆盖更新: {len(result['skipped'])} 条")
+    print(format_validation_report(result))
 
-    total = len(store.get_all_assets())
-    print(f"  数据库总计: {total} 条资产")
+    if result.get("applied"):
+        total = len(store.get_all_assets())
+        print(f"  数据库总计: {total} 条资产")
+    else:
+        print(f"\n提示: 确认无误后，加上 --apply 选项正式导入")

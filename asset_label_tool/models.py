@@ -67,10 +67,47 @@ class BatchRecord:
         )
 
 
+@dataclass
+class PrintTask:
+    name: str
+    category: str = ""
+    location: str = ""
+    responsible: str = ""
+    label_size: str = "medium"
+    code_style: str = "barcode"
+    skip_missing: bool = True
+    created_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PrintTask":
+        return cls(
+            name=d.get("name", ""),
+            category=d.get("category", ""),
+            location=d.get("location", ""),
+            responsible=d.get("responsible", ""),
+            label_size=d.get("label_size", "medium"),
+            code_style=d.get("code_style", "barcode"),
+            skip_missing=d.get("skip_missing", True),
+            created_at=d.get("created_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+
+
 LABEL_SIZES = {
-    "small": {"width": 200, "height": 100, "cols": 1},
-    "medium": {"width": 300, "height": 150, "cols": 1},
-    "large": {"width": 400, "height": 200, "cols": 1},
+    "small": {"width": 200, "height": 100},
+    "medium": {"width": 300, "height": 150},
+    "large": {"width": 400, "height": 200},
 }
 
 CODE_STYLES = ("barcode", "qrcode")
+
+PAPER_SIZES = {
+    "A4": {"width": 210, "height": 297},
+    "A5": {"width": 148, "height": 210},
+    "letter": {"width": 216, "height": 279},
+    "label_40x30": {"width": 40, "height": 30},
+    "label_60x40": {"width": 60, "height": 40},
+}
+

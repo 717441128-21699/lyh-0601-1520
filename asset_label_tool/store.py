@@ -1,7 +1,7 @@
 import json
 import os
 from typing import List, Optional, Dict
-from .models import Asset, BatchRecord
+from .models import Asset, BatchRecord, PrintTask
 
 
 class Store:
@@ -9,8 +9,10 @@ class Store:
         self.data_dir = data_dir
         self.assets_file = os.path.join(data_dir, "assets.json")
         self.batches_file = os.path.join(data_dir, "batches.json")
+        self.tasks_file = os.path.join(data_dir, "tasks.json")
         self._assets: Dict[str, Asset] = {}
         self._batches: List[BatchRecord] = []
+        self._tasks: Dict[str, PrintTask] = {}
         self._load()
 
     def _load(self):
@@ -22,6 +24,10 @@ class Store:
             with open(self.batches_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 self._batches = [BatchRecord.from_dict(b) for b in data]
+        if os.path.exists(self.tasks_file):
+            with open(self.tasks_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                self._tasks = {t["name"]: PrintTask.from_dict(t) for t in data}
 
     def _save_assets(self):
         os.makedirs(self.data_dir, exist_ok=True)
@@ -96,6 +102,10 @@ class Store:
         return [self._assets[aid] for aid in batch.asset_ids if aid in self._assets]
 
     def get_next_sequential_id(self, prefix: str = "AST") -> str:
+        num = self.get_next_sequential_number(prefix)
+        return f"{prefix}{num:06d}"
+
+    def get_next_sequential_number(self, prefix: str = "AST") -> int:
         existing = [a.asset_id for a in self._assets.values() if a.asset_id.startswith(prefix)]
         max_num = 0
         for eid in existing:
@@ -105,4 +115,49 @@ class Store:
                     max_num = num
             except ValueError:
                 continue
-        return f"{prefix}{max_num + 1:06d}"
+        return max_num + 1
+
+    def filter_assets(self, category: Optional[str] = None,
+                      location: Optional[str] = None,
+                      responsible: Optional[str] = None,
+                      unprinted_only: bool = False) -> List[Asset]:
+        results = list(self._assets.values())
+        if category:
+            results = [a for a in results if a.category == category]
+        if location:
+            results = [a for a in results if location in a.location]
+        if responsible:
+            results = [a for a in results if responsible in a.responsible]
+        if unprinted_only:
+            results = [a for a in results if not a.printed]
+        return results
+
+    def get_locations(self) -> List[str]:
+        locs = set(a.location for a in self._assets.values() if a.location)
+        return sorted(locs)
+
+    def get_responsibles(self) -> List[str]:
+        resps = set(a.responsible for a in self._assets.values() if a.responsible)
+        return sorted(resps)
+
+    def _save_tasks(self):
+        os.makedirs(self.data_dir, exist_ok=True)
+        with open(self.tasks_file, "w", encoding="utf-8") as f:
+            json.dump([t.to_dict() for t in self._tasks.values()], f, ensure_ascii=False, indent=2)
+
+    def save_task(self, task: PrintTask):
+        self._tasks[task.name] = task
+        self._save_tasks()
+
+    def get_task(self, name: str) -> Optional[PrintTask]:
+        return self._tasks.get(name)
+
+    def get_all_tasks(self) -> List[PrintTask]:
+        return list(self._tasks.values())
+
+    def delete_task(self, name: str) -> bool:
+        if name in self._tasks:
+            del self._tasks[name]
+            self._save_tasks()
+            return True
+        return False
